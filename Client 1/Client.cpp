@@ -1,7 +1,4 @@
-// Client.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
-
-#include "pch.h"
+﻿#include "pch.h"
 #include "framework.h"
 #include "Client.h"
 #include <afxsock.h>
@@ -16,34 +13,28 @@
 #define new DEBUG_NEW
 #endif
 
-// The one and only application object
-
-struct FileInfo
-{
-    string name;
-    streamsize size;
-};
-
 CWinApp theApp;
 
 using namespace std;
 
+struct FileInfo {
+    string name;
+    streamsize size;
+};
+
 bool stop = false;
 
-void signalHandler(int signum)
-{
+void signalHandler(int signum) {
     cout << "Interrupt signal (" << signum << ") received. Exiting..." << endl;
     stop = true;
 }
 
-void DownloadFile(CSocket& clientSocket, const string& fileName)
-{
+void DownloadFile(CSocket& clientSocket, const string& fileName) {
     clientSocket.Send(fileName.c_str(), fileName.size());
     streamsize fileSize;
     clientSocket.Receive(&fileSize, sizeof(fileSize));
 
-    if (fileSize < 0)
-    {
+    if (fileSize < 0) {
         cout << "File not found on server: " << fileName << endl;
         return;
     }
@@ -51,8 +42,7 @@ void DownloadFile(CSocket& clientSocket, const string& fileName)
     ofstream outputFile("output/" + fileName, ios::binary);
     char buffer[1024];
     streamsize totalBytesReceived = 0;
-    while (totalBytesReceived < fileSize && !stop)
-    {
+    while (totalBytesReceived < fileSize && !stop) {
         int bytesReceived = clientSocket.Receive(buffer, sizeof(buffer));
         if (bytesReceived <= 0)
             break;
@@ -71,34 +61,24 @@ void DownloadFile(CSocket& clientSocket, const string& fileName)
     }
 }
 
-int main()
-{
-    // Register signal handler for SIGINT
+int main() {
     signal(SIGINT, signalHandler);
 
     int nRetCode = 0;
-
     HMODULE hModule = ::GetModuleHandle(nullptr);
 
-    if (hModule != nullptr)
-    {
-        // Initialize MFC and print an error on failure
-        if (!AfxWinInit(hModule, nullptr, ::GetCommandLine(), 0))
-        {
+    if (hModule != nullptr) {
+        if (!AfxWinInit(hModule, nullptr, ::GetCommandLine(), 0)) {
             wprintf(L"Fatal Error: MFC initialization failed\n");
             nRetCode = 1;
-        }
-        else
-        {
-            if (AfxSocketInit() == false)
-            {
+        } else {
+            if (AfxSocketInit() == false) {
                 cerr << "Fail to initialize sockets.\n";
                 return 1;
             }
 
             CSocket clientSocket;
-            if (!clientSocket.Create())
-            {
+            if (!clientSocket.Create()) {
                 cerr << "Fail to create client socket.\n";
                 return 1;
             }
@@ -116,8 +96,7 @@ int main()
             serverAddr.sin_port = htons(port);
             InetPton(AF_INET, (IP.c_str()), &serverAddr.sin_addr);
 
-            if (!clientSocket.Connect((SOCKADDR*)&serverAddr, sizeof(serverAddr)))
-            {
+            if (!clientSocket.Connect((SOCKADDR*)&serverAddr, sizeof(serverAddr))) {
                 cerr << "Fail to connect to server.\n";
                 return 1;
             }
@@ -129,8 +108,7 @@ int main()
 
             vector<FileInfo> files(numFiles);
 
-            for (int i = 0; i < numFiles; ++i)
-            {
+            for (int i = 0; i < numFiles; ++i) {
                 int len;
                 clientSocket.Receive(&len, sizeof(len));
 
@@ -146,23 +124,18 @@ int main()
             }
 
             cout << "Files available for download:\n";
-            for (const auto& file : files)
-            {
+            for (const auto& file : files) {
                 cout << file.name << " " << file.size << " Bytes\n";
             }
 
-            for (const auto& file : files)
-            {
+            for (const auto& file : files) {
                 if (stop) break;
                 DownloadFile(clientSocket, file.name);
             }
 
             clientSocket.Close();
         }
-    }
-    else
-    {
-        // Handle error in getting module handle
+    } else {
         wprintf(L"Fatal Error: GetModuleHandle failed\n");
         nRetCode = 1;
     }
