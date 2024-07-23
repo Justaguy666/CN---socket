@@ -7,6 +7,7 @@
 #include <iostream>
 #include <fstream>
 #include <signal.h>
+#include <filesystem>
 #include <WS2tcpip.h>
 
 #ifdef _DEBUG
@@ -25,12 +26,15 @@ struct FileInfo {
 bool stop = false;
 
 void signalHandler(int signum) {
-    cout << "Interrupt signal (" << signum << ") received. Exiting..." << endl;
+    cout << "\nInterrupt signal (" << signum << ") received. Exiting..." << endl;
     stop = true;
 }
 
 void DownloadFile(CSocket& clientSocket, const string& fileName) {
+    cout << "Requesting file: " << fileName << endl;
+
     clientSocket.Send(fileName.c_str(), fileName.size());
+
     streamsize fileSize;
     clientSocket.Receive(&fileSize, sizeof(fileSize));
 
@@ -39,18 +43,34 @@ void DownloadFile(CSocket& clientSocket, const string& fileName) {
         return;
     }
 
-    ofstream outputFile("output/" + fileName, ios::binary);
+    const string outputDir = "output/";
+    if (!filesystem::exists(outputDir)) {
+        if (!filesystem::create_directory(outputDir)) {
+            cerr << "Error creating output directory." << endl;
+            return;
+        }
+    }
+
+    ofstream outputFile(outputDir + fileName, ios::binary);
+    if (!outputFile.is_open()) {
+        char errorMsg[256];
+        strerror_s(errorMsg, sizeof(errorMsg), errno);
+        cerr << "Error opening output file: " << outputDir + fileName << ". Error: " << errorMsg << endl;
+        return;
+    }
+
     char buffer[1024];
     streamsize totalBytesReceived = 0;
     while (totalBytesReceived < fileSize && !stop) {
         int bytesReceived = clientSocket.Receive(buffer, sizeof(buffer));
-        if (bytesReceived <= 0)
+        if (bytesReceived == 0) {
+            cerr << "Connection closed by server." << endl;
             break;
+        }
 
         outputFile.write(buffer, bytesReceived);
         totalBytesReceived += bytesReceived;
 
-        // Display download progress
         float progress = ((totalBytesReceived * 100.0) / fileSize);
         cout << "Downloading " << fileName << " .... " << progress << "%" << "\r";
         cout.flush();
@@ -71,33 +91,34 @@ int main() {
         if (!AfxWinInit(hModule, nullptr, ::GetCommandLine(), 0)) {
             wprintf(L"Fatal Error: MFC initialization failed\n");
             nRetCode = 1;
-        } else {
+            system("pause");
+            return nRetCode;
+        }
+        else {
             if (AfxSocketInit() == false) {
                 cerr << "Fail to initialize sockets.\n";
+                system("pause");
                 return 1;
             }
 
             CSocket clientSocket;
             if (!clientSocket.Create()) {
                 cerr << "Fail to create client socket.\n";
+                system("pause");
                 return 1;
             }
 
-            wstring IP;
-            int port;
+            char IP[1000];
+            unsigned int port;
             cout << "Enter server IP address: ";
-            wcin >> IP;
+            cin >> IP;
             cout << "Enter server port: ";
             cin >> port;
 
-            sockaddr_in serverAddr;
-            memset(&serverAddr, 0, sizeof(serverAddr));
-            serverAddr.sin_family = AF_INET;
-            serverAddr.sin_port = htons(port);
-            InetPton(AF_INET, (IP.c_str()), &serverAddr.sin_addr);
-
-            if (!clientSocket.Connect((SOCKADDR*)&serverAddr, sizeof(serverAddr))) {
+            if (!clientSocket.Connect((CA2W)IP, port)) {
                 cerr << "Fail to connect to server.\n";
+                clientSocket.Close();
+                system("pause");
                 return 1;
             }
 
@@ -135,10 +156,14 @@ int main() {
 
             clientSocket.Close();
         }
-    } else {
+    }
+    else {
         wprintf(L"Fatal Error: GetModuleHandle failed\n");
         nRetCode = 1;
+        system("pause");
     }
+
+    system("pause");
 
     return nRetCode;
 }
