@@ -3,7 +3,6 @@
 #include "Server.h"
 #include <afxsock.h>
 #include <vector>
-#include <thread>
 #include <string>
 #include <sstream>
 #include <fstream>
@@ -53,7 +52,8 @@ vector<FileInfo> ReadFileList(const string& filename) {
             }
         }
         inFile.close();
-    } else {
+    }
+    else {
         cerr << "Could not open file list: " << filename << endl;
     }
     return files;
@@ -73,11 +73,13 @@ void HandleClient(CSocket* pClient, const vector<FileInfo>& files) {
     char buffer[1024];
     while (true) {
         int bytesReceived = pClient->Receive(buffer, sizeof(buffer));
-        if (bytesReceived <= 0)
+        if (bytesReceived == 0) {
+            cerr << "Connection closed by client." << endl;
             break;
+        }
 
         buffer[bytesReceived] = '\0';
-        string fileName = buffer;
+        string fileName(buffer);
 
         ifstream file(fileName, ios::binary | ios::ate);
         if (file.is_open()) {
@@ -91,7 +93,8 @@ void HandleClient(CSocket* pClient, const vector<FileInfo>& files) {
             }
             pClient->Send(fileBuffer, file.gcount());
             file.close();
-        } else {
+        }
+        else {
             streamsize fileSize = -1;
             pClient->Send(&fileSize, sizeof(fileSize));
         }
@@ -108,7 +111,8 @@ int main() {
         if (!AfxWinInit(hModule, nullptr, ::GetCommandLine(), 0)) {
             wprintf(L"Fatal Error: MFC initialization failed\n");
             nRetCode = 1;
-        } else {
+        }
+        else {
             if (AfxSocketInit() == false) {
                 cerr << "Fail to initialize sockets.\n";
                 return 1;
@@ -128,23 +132,21 @@ int main() {
             cout << "Server is listening on port 12345.\n";
             vector<FileInfo> files = ReadFileList("input.txt");
 
-            vector<thread> clientThreads;
             while (true) {
                 CSocket* pClient = new CSocket;
                 if (serverSocket.Accept(*pClient)) {
-                    cout << "Client connected to server.\n";
-                    clientThreads.push_back(thread(HandleClient, pClient, files));
-                } else {
+                    cout << "Client is connected.\n";
+                    HandleClient(pClient, files);
+                }
+                else {
                     delete pClient;
                 }
             }
 
-            for (auto& t : clientThreads) {
-                if (t.joinable())
-                    t.join();
-            }
+            serverSocket.Close();
         }
-    } else {
+    }
+    else {
         wprintf(L"Fatal Error: GetModuleHandle failed\n");
         nRetCode = 1;
     }

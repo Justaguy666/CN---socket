@@ -1,2 +1,2 @@
-5MB 5MB
-10MB 10MB
+5MB.zip 5MB
+10MB.zip 10MB
