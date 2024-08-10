@@ -5,10 +5,12 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include <iomanip>
 #include <fstream>
+#include <sstream>
 #include <signal.h>
 #include <filesystem>
-#include <WS2tcpip.h>
+#include <set>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -53,9 +55,7 @@ void DownloadFile(CSocket& clientSocket, const string& fileName) {
 
     ofstream outputFile(outputDir + fileName, ios::binary);
     if (!outputFile.is_open()) {
-        char errorMsg[256];
-        strerror_s(errorMsg, sizeof(errorMsg), errno);
-        cerr << "Error opening output file: " << outputDir + fileName << ". Error: " << errorMsg << endl;
+        cerr << "Unable to open file " << outputDir + fileName << endl;
         return;
     }
 
@@ -70,15 +70,73 @@ void DownloadFile(CSocket& clientSocket, const string& fileName) {
 
         outputFile.write(buffer, bytesReceived);
         totalBytesReceived += bytesReceived;
-
         float progress = ((totalBytesReceived * 100.0) / fileSize);
-        cout << "Downloading " << fileName << " .... " << progress << "%" << "\r";
-        cout.flush();
+
+        int fixedLength = 40;
+
+        stringstream ss;
+        ss << "Downloading " << fileName << " .... " << setw(3) << progress << "%";
+        string output = ss.str();
+        if (output.length() < fixedLength) {
+            output += string(fixedLength - output.length(), ' ');
+        }
+
+        cout << output << "\r" << flush;
     }
     outputFile.close();
     if (!stop) {
         cout << "Downloading " << fileName << " .... 100%" << endl;
     }
+}
+
+void SaveFileListToInputFile(const vector<FileInfo>& files) {
+    ofstream outFile("input.txt", ios::app);
+    if (!outFile.is_open()) {
+        cerr << "Unable to open input.txt for writing." << endl;
+        return;
+    }
+
+    for (const auto& file : files) {
+        outFile << file.name << endl;
+    }
+    outFile.close();
+}
+
+vector<string> ReadInputFile() {
+    vector<string> fileNames;
+    ifstream inFile("input.txt");
+    string fileName;
+
+    while (getline(inFile, fileName)) {
+        fileNames.push_back(fileName);
+    }
+
+    inFile.close();
+    return fileNames;
+}
+
+set<string> ReadDownloadedFile() {
+    set<string> downloadedFiles;
+    ifstream inFile("downloaded.txt");
+    string fileName;
+
+    while (getline(inFile, fileName)) {
+        downloadedFiles.insert(fileName);
+    }
+
+    inFile.close();
+    return downloadedFiles;
+}
+
+void UpdateDownloadedFile(const string& fileName) {
+    ofstream outFile("downloaded.txt", ios::app);
+    if (!outFile.is_open()) {
+        cerr << "Unable to open downloaded.txt for writing." << endl;
+        return;
+    }
+
+    outFile << fileName << endl;
+    outFile.close();
 }
 
 int main() {
@@ -108,7 +166,7 @@ int main() {
                 return 1;
             }
 
-            char IP[1000];
+            char IP[16];
             unsigned int port;
             cout << "Enter server IP address: ";
             cin >> IP;
@@ -144,14 +202,20 @@ int main() {
                 delete[] namebuffer;
             }
 
-            cout << "Files available for download:\n";
-            for (const auto& file : files) {
-                cout << file.name << " " << file.size << " Bytes\n";
-            }
+            SaveFileListToInputFile(files);
 
-            for (const auto& file : files) {
+            vector<string> filesToDownload = ReadInputFile();
+            set<string> downloadedFiles = ReadDownloadedFile();
+
+            for (const auto& file : filesToDownload) {
                 if (stop) break;
-                DownloadFile(clientSocket, file.name);
+                if (downloadedFiles.find(file) == downloadedFiles.end()) {
+                    DownloadFile(clientSocket, file);
+                    UpdateDownloadedFile(file);
+                }
+                else {
+                    cout << "File already downloaded: " << file << endl;
+                }
             }
 
             clientSocket.Close();
