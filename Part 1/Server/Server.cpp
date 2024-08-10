@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "framework.h"
 #include "Server.h"
 #include <afxsock.h>
@@ -6,6 +6,7 @@
 #include <string>
 #include <sstream>
 #include <fstream>
+#include <unordered_set>
 #include <cmath>
 
 #ifdef _DEBUG
@@ -19,7 +20,20 @@ using namespace std;
 struct FileInfo {
     string name;
     streamsize size;
+
+    bool operator==(const FileInfo& other) const {
+        return name == other.name && size == other.size;
+    }
 };
+
+namespace std {
+    template <>
+    struct hash<FileInfo> {
+        size_t operator()(const FileInfo& file) const {
+            return hash<string>()(file.name) ^ (hash<streamsize>()(file.size) << 1);
+        }
+    };
+}
 
 streamsize ConvertToBytes(const string& sizeStr) {
     string unit;
@@ -30,7 +44,7 @@ streamsize ConvertToBytes(const string& sizeStr) {
     if (unit == "KB") size *= 1024;
     else if (unit == "MB") size *= pow(1024, 2);
     else if (unit == "GB") size *= pow(1024, 3);
-    else if (unit == "TB") size *= pow(1024LL, 4);
+    else if (unit == "TB") size *= pow(1024, 4);
 
     return size;
 }
@@ -73,8 +87,8 @@ void HandleClient(CSocket* pClient, const vector<FileInfo>& files) {
     char buffer[1024];
     while (true) {
         int bytesReceived = pClient->Receive(buffer, sizeof(buffer));
-        if (bytesReceived == 0) {
-            cerr << "Connection closed by client." << endl;
+        if (bytesReceived <= 0) {
+            cerr << "Connection closed by client or error occurred." << endl;
             break;
         }
 
@@ -99,8 +113,23 @@ void HandleClient(CSocket* pClient, const vector<FileInfo>& files) {
             pClient->Send(&fileSize, sizeof(fileSize));
         }
     }
+
     pClient->Close();
     delete pClient;
+}
+
+unordered_set<FileInfo> fileSet(const vector<FileInfo>& files) {
+    return unordered_set<FileInfo>(files.begin(), files.end());
+}
+
+vector<FileInfo> getNewFiles(const unordered_set<FileInfo>& oldFiles, const unordered_set<FileInfo>& newFiles) {
+    vector<FileInfo> files;
+    for (const auto& file : newFiles) {
+        if (oldFiles.find(file) == oldFiles.end()) {
+            files.push_back(file);
+        }
+    }
+    return files;
 }
 
 int main() {
@@ -130,7 +159,8 @@ int main() {
             }
 
             cout << "Server is listening on port 12345.\n";
-            vector<FileInfo> files = ReadFileList("input.txt");
+
+            vector<FileInfo> files = ReadFileList("file_list.txt");
 
             while (true) {
                 CSocket* pClient = new CSocket;
