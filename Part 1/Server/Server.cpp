@@ -8,6 +8,7 @@
 #include <fstream>
 #include <unordered_set>
 #include <cmath>
+#include <thread>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -20,20 +21,7 @@ using namespace std;
 struct FileInfo {
     string name;
     streamsize size;
-
-    bool operator==(const FileInfo& other) const {
-        return name == other.name && size == other.size;
-    }
 };
-
-namespace std {
-    template <>
-    struct hash<FileInfo> {
-        size_t operator()(const FileInfo& file) const {
-            return hash<string>()(file.name) ^ (hash<streamsize>()(file.size) << 1);
-        }
-    };
-}
 
 streamsize ConvertToBytes(const string& sizeStr) {
     string unit;
@@ -73,7 +61,41 @@ vector<FileInfo> ReadFileList(const string& filename) {
     return files;
 }
 
-void HandleClient(CSocket* pClient, const vector<FileInfo>& files) {
+vector<FileInfo> UpdateFileList(const string& filename, const vector<FileInfo>& currentFiles) {
+    unordered_set<string> existingFiles;
+    for (const auto& file : currentFiles) {
+        existingFiles.insert(file.name);
+    }
+
+    ifstream inFile(filename);
+    vector<FileInfo> updatedFiles = currentFiles;
+
+    if (inFile.is_open()) {
+        string line;
+        while (getline(inFile, line)) {
+            size_t pos = line.find(' ');
+            if (pos != string::npos) {
+                string name = line.substr(0, pos);
+                if (existingFiles.find(name) == existingFiles.end()) {
+                    string sizeStr = line.substr(pos + 1);
+                    streamsize size = ConvertToBytes(sizeStr);
+
+                    updatedFiles.push_back({ name, size });
+                }
+            }
+        }
+        inFile.close();
+    }
+    else {
+        cerr << "Could not open file list: " << filename << endl;
+    }
+    return updatedFiles;
+}
+
+void HandleClient(CSocket* pClient, vector<FileInfo>& files) {
+    // Cập nhật danh sách file trước khi gửi tới client
+    files = UpdateFileList("file_list.txt", files);
+
     int numFiles = files.size();
     pClient->Send(&numFiles, sizeof(numFiles));
 
@@ -87,11 +109,18 @@ void HandleClient(CSocket* pClient, const vector<FileInfo>& files) {
     char buffer[1024];
     while (true) {
         int bytesReceived = pClient->Receive(buffer, sizeof(buffer));
-        if (bytesReceived <= 0) {
-            cerr << "Connection closed by client or error occurred." << endl;
+
+        if (bytesReceived == SOCKET_ERROR) {
+            int errCode = WSAGetLastError();
+            cerr << "Socket error occurred: " << errCode << endl;
+            break;
+        }
+        else if (bytesReceived == 0) {
+            cout << "Client has closed the connection." << endl;
             break;
         }
 
+        // Null terminate the received string to avoid overflow issues
         buffer[bytesReceived] = '\0';
         string fileName(buffer);
 
@@ -112,24 +141,13 @@ void HandleClient(CSocket* pClient, const vector<FileInfo>& files) {
             streamsize fileSize = -1;
             pClient->Send(&fileSize, sizeof(fileSize));
         }
+
+        // Sau khi xử lý một yêu cầu, sleep để chờ yêu cầu tiếp theo hoặc cập nhật danh sách file
+        files = UpdateFileList("file_list.txt", files);
     }
 
     pClient->Close();
     delete pClient;
-}
-
-unordered_set<FileInfo> fileSet(const vector<FileInfo>& files) {
-    return unordered_set<FileInfo>(files.begin(), files.end());
-}
-
-vector<FileInfo> getNewFiles(const unordered_set<FileInfo>& oldFiles, const unordered_set<FileInfo>& newFiles) {
-    vector<FileInfo> files;
-    for (const auto& file : newFiles) {
-        if (oldFiles.find(file) == oldFiles.end()) {
-            files.push_back(file);
-        }
-    }
-    return files;
 }
 
 int main() {
@@ -167,9 +185,6 @@ int main() {
                 if (serverSocket.Accept(*pClient)) {
                     cout << "Client is connected.\n";
                     HandleClient(pClient, files);
-                }
-                else {
-                    delete pClient;
                 }
             }
 
