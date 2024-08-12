@@ -182,40 +182,45 @@ int main() {
 
             cout << "Connected to server.\n";
 
-            int numFiles;
-            clientSocket.Receive(&numFiles, sizeof(numFiles));
+            while (!stop) { // Vòng lặp chính của client
+                int numFiles;
+                clientSocket.Receive(&numFiles, sizeof(numFiles));
 
-            vector<FileInfo> files(numFiles);
+                vector<FileInfo> files(numFiles);
 
-            for (int i = 0; i < numFiles; ++i) {
-                int len;
-                clientSocket.Receive(&len, sizeof(len));
+                for (int i = 0; i < numFiles; ++i) {
+                    int len;
+                    clientSocket.Receive(&len, sizeof(len));
 
-                char* namebuffer = new char[len + 1];
-                clientSocket.Receive(namebuffer, len);
-                namebuffer[len] = '\0';
+                    char* namebuffer = new char[len + 1];
+                    clientSocket.Receive(namebuffer, len);
+                    namebuffer[len] = '\0';
 
-                streamsize size;
-                clientSocket.Receive(&size, sizeof(size));
+                    streamsize size;
+                    clientSocket.Receive(&size, sizeof(size));
 
-                files[i] = { string(namebuffer), size };
-                delete[] namebuffer;
-            }
-
-            SaveFileListToInputFile(files);
-
-            vector<string> filesToDownload = ReadInputFile();
-            set<string> downloadedFiles = ReadDownloadedFile();
-
-            for (const auto& file : filesToDownload) {
-                if (stop) break;
-                if (downloadedFiles.find(file) == downloadedFiles.end()) {
-                    DownloadFile(clientSocket, file);
-                    UpdateDownloadedFile(file);
+                    files[i] = { string(namebuffer), size };
+                    delete[] namebuffer;
                 }
-                else {
-                    cout << "File already downloaded: " << file << endl;
+
+                SaveFileListToInputFile(files);
+
+                vector<string> filesToDownload = ReadInputFile();
+                set<string> downloadedFiles = ReadDownloadedFile();
+
+                for (const auto& file : filesToDownload) {
+                    if (stop) break;
+                    if (downloadedFiles.find(file) == downloadedFiles.end()) {
+                        DownloadFile(clientSocket, file);
+                        UpdateDownloadedFile(file);
+                    }
+                    else {
+                        cout << "File already downloaded: " << file << endl;
+                    }
                 }
+
+                // Cập nhật danh sách file cần tải xuống
+                filesToDownload = ReadInputFile();
             }
 
             clientSocket.Close();
