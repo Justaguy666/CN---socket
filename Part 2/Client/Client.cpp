@@ -217,45 +217,6 @@ vector<FileInfo> processFiles(CSocket& client)
     return filesFromClient;
 }
 
-void displayPercentDownload(vector<FileInfo> file, vector<int> percent, vector<bool> receiveFile)
-{
-    system("cls");    
-
-    cout << "Condition:\n";
-    for (int i = 0; i < file.size(); ++i)
-    {
-        if (receiveFile[i])
-        {
-            cout << file[i].name << ": download completed.\n";
-        }
-    }
-
-    bool isAllReceive = true;
-    for (int i = 0; i < file.size(); ++i)
-    {
-        if (!receiveFile[i])
-        {
-            isAllReceive = false;
-            break;
-        }
-    }
-
-    if (isAllReceive)
-    {
-        cout << "\nAll files have been downloaded completely.\n";
-        return;
-    }
-
-    cout << "Request:\n";
-    for (int i = 0; i < file.size(); ++i)
-    {
-        if (!receiveFile[i])
-        {
-            cout << "Downloading " << file[i].name << "...." << percent[i] << "%" << '\n';
-        }
-    }
-}
-
 void displayPercentageOfDownload(int x, int y, vector<FileInfo> listFilesHandle, vector<int> percent, vector<bool> receiveFile, int mode)
 {
     if (mode == 0)
