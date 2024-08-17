@@ -9,6 +9,8 @@
 #include <signal.h>
 #include <filesystem>
 #include <WS2tcpip.h>
+#include <iostream>
+#include <algorithm>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -18,7 +20,7 @@ CWinApp theApp;
 
 using namespace std;
 
-void gotoXY(int x, int y) 
+void gotoXY(int x, int y)
 {
     COORD coord;
     coord.X = x;
@@ -26,11 +28,14 @@ void gotoXY(int x, int y)
     SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
 }
 
+enum PriorityMode { NORMAL, HIGH, CRITICAL };
+
 struct FileInfo
 {
     string name = "";
     string size = "";
     string typeData = "";
+    PriorityMode priority = NORMAL;
 };
 
 bool stop = false;
@@ -89,7 +94,7 @@ void writeFilesFromServer(string filename, vector<FileInfo> files)
 
     if (!ofs.is_open())
     {
-        cout << "Failed to opened file: " << filename << '\n';
+        cout << "Failed to open file: " << filename << '\n';
         return;
     }
 
@@ -134,7 +139,7 @@ vector<FileInfo> getListFiles(string filename)
 
     if (!ifs.is_open())
     {
-        cout << "Failed to opened file: " << filename << '\n';
+        cout << "Failed to open file: " << filename << '\n';
         return {};
     }
 
@@ -163,58 +168,22 @@ vector<FileInfo> getListFiles(string filename)
     return files;
 }
 
-vector<FileInfo> processFiles(CSocket& client)
-{
-    vector<FileInfo> filesFromServer = receiveFiles(client);
-    writeFilesFromServer("input.txt", filesFromServer);
+vector<FileInfo> scanNewFiles(const vector<FileInfo>& processedFiles) {
+    vector<FileInfo> currentFiles = getListFiles("input.txt");
+    vector<FileInfo> newFiles;
 
-    int choice = 0;
-    while (choice == 0)
-    {
-        system("cls");
-        cout << "The list of file can downloaded:\n";
-        for (int i = 0; i < filesFromServer.size(); ++i)
-        {
-            cout << filesFromServer[i].name << " " << filesFromServer[i].size << filesFromServer[i].typeData << '\n';
-        }
+    for (const auto& file : currentFiles) {
+        auto it = find_if(processedFiles.begin(), processedFiles.end(),
+            [&](const FileInfo& processed) {
+                return processed.name == file.name && processed.size == file.size && processed.typeData == file.typeData;
+            });
 
-        cout << "\nAfter you entered file named from the list file of server\n";
-        cout << "Enter 1 if you have completed the file list and 0 if you have not completed it: ";
-        cin >> choice;
-
-        if (choice == 1) break;
-    }
-
-    vector<FileInfo> filesFromClient = getListFiles("input.txt");
-
-    if (filesFromClient.empty())
-    {
-        int quantityFiles = -1;
-        client.Send(&quantityFiles, sizeof(quantityFiles), 0);
-    }
-    else
-    {
-        int quantityFiles = filesFromClient.size();
-        client.Send(&quantityFiles, sizeof(quantityFiles), 0);
-
-        for (int i = 0; i < quantityFiles; ++i)
-        {
-            int length_name = filesFromClient[i].name.size();
-            int length_size = filesFromClient[i].size.size();
-            int length_typeData = filesFromClient[i].typeData.size();
-
-            client.Send(&length_name, sizeof(length_name));
-            client.Send(filesFromClient[i].name.c_str(), length_name);
-
-            client.Send(&length_size, sizeof(length_size));
-            client.Send(filesFromClient[i].size.c_str(), length_size);
-
-            client.Send(&length_typeData, sizeof(length_typeData));
-            client.Send(filesFromClient[i].typeData.c_str(), length_typeData);
+        if (it == processedFiles.end()) {
+            newFiles.push_back(file);
         }
     }
 
-    return filesFromClient;
+    return newFiles;
 }
 
 void displayPercentageOfDownload(int x, int y, vector<FileInfo> listFilesHandle, vector<int> percent, vector<bool> receiveFile, int mode)
@@ -266,110 +235,191 @@ void displayPercentageOfDownload(int x, int y, vector<FileInfo> listFilesHandle,
                 cout << listFilesHandle[i].name << ": download completed.\n";
             }
         }
-        
+
         cout << "\nAll files have been downloaded completely.\n";
     }
 }
 
-void downloadingFile(CSocket& client, vector<FileInfo> listFilesHandle)
+void displayDownloadProgress(const vector<FileInfo>& files, const vector<int>& percentComplete, int x, int y)
 {
-    if (listFilesHandle.empty())
+    for (size_t i = 0; i < files.size(); ++i)
     {
-        cout << "The list file is empty.\n";
+        gotoXY(x, y + i);
+        cout << files[i].name << " - " << percentComplete[i] << "% complete    ";
+    }
+}
+PriorityMode getPriorityModeFromString(const std::string& priorityStr) {
+    if (priorityStr == "CRITICAL") return CRITICAL;
+    if (priorityStr == "HIGH") return HIGH;
+    return NORMAL;
+}
+
+int getChunksForPriority(PriorityMode priority) {
+    switch (priority) {
+    case CRITICAL: return 10;
+    case HIGH: return 4;
+    default: return 1;
+    }
+}
+
+void downloadingFile(CSocket& client, std::vector<FileInfo>& files)
+{
+    if (files.empty())
+    {
+        std::cout << "The list of files is empty.\n";
         return;
     }
 
-    string outputDir = "output//";
-    if (!filesystem::exists(outputDir)) 
+    std::string outputDir = "output//";
+    if (!std::filesystem::exists(outputDir))
     {
-        if (!filesystem::create_directory(outputDir)) 
+        if (!std::filesystem::create_directory(outputDir))
         {
-            cerr << "Error creating output directory." << endl;
+            std::cerr << "Error creating output directory." << std::endl;
             return;
         }
     }
 
-    vector<string> filesname;
-    for (int i = 0; i < listFilesHandle.size(); ++i)
+    std::vector<std::string> filesname;
+    for (const auto& file : files)
     {
-        string path = outputDir + listFilesHandle[i].name;
-        filesname.push_back(path);
+        filesname.push_back(outputDir + file.name);
     }
 
-    vector<ofstream> files(listFilesHandle.size());
-    vector<streamsize> sizeOfFile(listFilesHandle.size());
-    vector<streamsize> totalBytesReceive(listFilesHandle.size(), 0);
-    vector<bool> receiveFile(listFilesHandle.size(), false);
-    vector<int> percent(listFilesHandle.size(), 0);
+    std::vector<std::ofstream> outFileStreams(files.size());
+    std::vector<streamsize> fileSizes(files.size());
+    std::vector<streamsize> bytesReceived(files.size(), 0);
+    std::vector<bool> fileDownloaded(files.size(), false);
+    std::vector<int> percentComplete(files.size(), 0);
 
-    for (int i = 0; i < listFilesHandle.size(); ++i)
+    // Receiving file sizes from the server
+    for (size_t i = 0; i < files.size(); ++i)
     {
-        client.Receive(&sizeOfFile[i], sizeof(sizeOfFile[i]));
-        if (sizeOfFile[i] <= 0)
+        client.Receive(&fileSizes[i], sizeof(fileSizes[i]));
+        std::cout << "File: " << files[i].name << " - Size: " << fileSizes[i] << " bytes\n";
+
+        if (fileSizes[i] <= 0)
         {
-            cout << sizeOfFile[i] << '\n';
-            cout << "Failed to receive the bytes of file: " << listFilesHandle[i].name << '\n';
+            std::cerr << "Failed to receive the size of file: " << files[i].name << '\n';
+            return;
+        }
+
+        outFileStreams[i].open(filesname[i], std::ios::binary);
+        if (!outFileStreams[i].is_open())
+        {
+            std::cerr << "Failed to open file: " << files[i].name << '\n';
             return;
         }
     }
 
-    for (int i = 0; i < listFilesHandle.size(); ++i)
-    {
-        files[i].open(filesname[i], ios::binary);
-
-        if (!files[i].is_open())
-        {
-            cout << "Failed to opened file: " << filesname[i] << '\n';
-            return;
-        }
-    }
-
-    char packageReceive[1024];
+    char buffer[1024];
     system("cls");
-    cout << "Request:\n";
+    int x = 0, y = 0; // Initial position for displaying the download progress
+
     while (true)
     {
-        bool isReceiveAll = true;
-        for (int i = 0; i < listFilesHandle.size(); ++i)
-        {
-            if (!receiveFile[i])
-            {
-                isReceiveAll = false;
-                break;
-            }
-        }
+        bool allFilesDownloaded = std::all_of(fileDownloaded.begin(), fileDownloaded.end(), [](bool downloaded) { return downloaded; });
+        if (allFilesDownloaded) break;
 
-        if (isReceiveAll) break;
+        for (size_t i = 0; i < files.size(); ++i)
+        {
+            if (fileDownloaded[i]) continue;
 
-        int idxFile;
-        int x = 0, y = 1;
-        client.Receive((char*)&idxFile, sizeof(int), 0);
-        if (idxFile >= 0 && idxFile < listFilesHandle.size())
-        {
-            int bytesReceive = client.Receive(packageReceive, sizeof(packageReceive));
-            totalBytesReceive[idxFile] += bytesReceive;
-            files[idxFile].write(packageReceive, sizeof(packageReceive));
-            percent[idxFile] = totalBytesReceive[idxFile] * 100.0 / sizeOfFile[idxFile];
-            displayPercentageOfDownload(0, 1, listFilesHandle, percent, receiveFile, 1);
-            if (totalBytesReceive[idxFile] >= sizeOfFile[idxFile])
+            int chunksToDownload = getChunksForPriority(files[i].priority);
+            for (int chunk = 0; chunk < chunksToDownload && !fileDownloaded[i]; ++chunk)
             {
-                receiveFile[idxFile] = true;
-                displayPercentageOfDownload(0, 1, listFilesHandle, percent, receiveFile, 0);
+                streamsize bytesToReceive = min(static_cast<streamsize>(sizeof(buffer)), fileSizes[i] - bytesReceived[i]);
+                int bytesReceivedThisChunk = client.Receive(buffer, bytesToReceive);
+
+                if (bytesReceivedThisChunk > 0)
+                {
+                    bytesReceived[i] += bytesReceivedThisChunk;
+                    outFileStreams[i].write(buffer, bytesReceivedThisChunk);
+                    percentComplete[i] = static_cast<int>((bytesReceived[i] * 100.0) / fileSizes[i]);
+
+                    // Display the download progress for the current state
+                    displayDownloadProgress(files, percentComplete, x, y);
+
+                    if (bytesReceived[i] >= fileSizes[i])
+                    {
+                        fileDownloaded[i] = true;
+                        std::cout << "\nDownload completed: " << files[i].name << "\n";
+                    }
+                }
+                else
+                {
+                    std::cerr << "Error receiving file data.\n";
+                    return;
+                }
             }
-        }
-        else
-        {
-            cout << "Error to send index.\n";
-            return;
         }
     }
 
-    for (int i = 0; i < listFilesHandle.size(); ++i)
+    for (auto& file : outFileStreams)
     {
-        files[i].close();
+        if (file.is_open())
+        {
+            file.close();
+        }
     }
 
-    displayPercentageOfDownload(0, 0, listFilesHandle, percent, receiveFile, 2);
+    std::cout << "\nAll files have been successfully downloaded.\n";
+}
+
+std::vector<FileInfo> processFiles(CSocket& client) {
+    std::vector<FileInfo> filesFromServer = receiveFiles(client);
+    writeFilesFromServer("input.txt", filesFromServer);
+
+    int choice = 0;
+    while (choice == 0) {
+        system("cls");
+        std::cout << "The list of files that can be downloaded:\n";
+        for (int i = 0; i < filesFromServer.size(); ++i) {
+            std::cout << filesFromServer[i].name << " " << filesFromServer[i].size << filesFromServer[i].typeData << '\n';
+        }
+
+        std::cout << "\nAfter you have entered file names from the server's list of files\n";
+        std::cout << "Enter 1 if you have completed the file list and 0 if you have not completed it: ";
+        std::cin >> choice;
+
+        if (choice == 1) break;
+    }
+
+    std::vector<FileInfo> filesFromClient = getListFiles("input.txt");
+
+    if (filesFromClient.empty()) {
+        int quantityFiles = -1;
+        client.Send(&quantityFiles, sizeof(quantityFiles), 0);
+    }
+    else {
+        // Assign priority to each file based on input
+        for (auto& file : filesFromClient) {
+            std::cout << "Assign priority (NORMAL, HIGH, CRITICAL) for " << file.name << ": ";
+            std::string priority;
+            std::cin >> priority;
+            file.priority = getPriorityModeFromString(priority);
+        }
+
+        int quantityFiles = filesFromClient.size();
+        client.Send(&quantityFiles, sizeof(quantityFiles), 0);
+
+        for (int i = 0; i < quantityFiles; ++i) {
+            int length_name = filesFromClient[i].name.size();
+            int length_size = filesFromClient[i].size.size();
+            int length_typeData = filesFromClient[i].typeData.size();
+
+            client.Send(&length_name, sizeof(length_name));
+            client.Send(filesFromClient[i].name.c_str(), length_name);
+
+            client.Send(&length_size, sizeof(length_size));
+            client.Send(filesFromClient[i].size.c_str(), length_size);
+
+            client.Send(&length_typeData, sizeof(length_typeData));
+            client.Send(filesFromClient[i].typeData.c_str(), length_typeData);
+        }
+    }
+
+    return filesFromClient;
 }
 
 int main() {
@@ -413,11 +463,51 @@ int main() {
 
             system("cls");
             cout << "Connected to the server successfully.\n";
-            vector<FileInfo> filesFromClient = processFiles(clientSocket);
-            downloadingFile(clientSocket, filesFromClient);
+
+            vector<FileInfo> processedFiles;
+
+            // Bước đầu tiên: tải danh sách file từ server ngay sau khi kết nối
+            vector<FileInfo> filesFromServer = processFiles(clientSocket);
+            if (!filesFromServer.empty()) {
+                downloadingFile(clientSocket, filesFromServer);
+                processedFiles.insert(processedFiles.end(), filesFromServer.begin(), filesFromServer.end());
+            }
+
+            // Vòng lặp quét định kỳ
+            while (!stop) {
+                vector<FileInfo> newFiles = scanNewFiles(processedFiles);
+
+                if (!newFiles.empty()) {
+                    // Gửi các file mới để tải về
+                    int quantityFiles = newFiles.size();
+                    clientSocket.Send(&quantityFiles, sizeof(quantityFiles), 0);
+
+                    for (const auto& file : newFiles) {
+                        int length_name = file.name.size();
+                        int length_size = file.size.size();
+                        int length_typeData = file.typeData.size();
+
+                        clientSocket.Send(&length_name, sizeof(length_name));
+                        clientSocket.Send(file.name.c_str(), length_name);
+
+                        clientSocket.Send(&length_size, sizeof(length_size));
+                        clientSocket.Send(file.size.c_str(), length_size);
+
+                        clientSocket.Send(&length_typeData, sizeof(length_typeData));
+                        clientSocket.Send(file.typeData.c_str(), length_typeData);
+                    }
+
+                    // Tải về các file mới từ server
+                    downloadingFile(clientSocket, newFiles);
+
+                    // Cập nhật danh sách các file đã xử lý
+                    processedFiles.insert(processedFiles.end(), newFiles.begin(), newFiles.end());
+                }
+
+                Sleep(2000); // Chờ 2 giây trước khi quét lại
+            }
 
             cout << "\nClose connection.\n";
-
             clientSocket.Close();
         }
     }

@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "framework.h"
 #include "Server.h"
 #include <afxsock.h>
@@ -17,7 +17,7 @@ CWinApp theApp;
 
 using namespace std;
 
-struct FileInfo 
+struct FileInfo
 {
     string name = "";
     string size = "";
@@ -56,7 +56,7 @@ vector<FileInfo> getListFiles(const string filename)
 
     if (!ifs.is_open())
     {
-        cout << "Failed to opened this file.\n";
+        cout << "Failed to open file.\n";
         return {};
     }
 
@@ -151,7 +151,7 @@ void handleClient(CSocket* pClient)
 
     if (!filesFromClient.empty())
     {
-        cout << "\nClient want to downloads list files:\n";
+        cout << "\nClient wants to download the following files:\n";
         for (int i = 0; i < filesFromClient.size(); ++i)
         {
             cout << i + 1 << ". " << filesFromClient[i].name << " " << filesFromClient[i].size << filesFromClient[i].typeData << '\n';
@@ -159,7 +159,7 @@ void handleClient(CSocket* pClient)
     }
     else
     {
-        cout << "The text file contains name of files downloading which was empty !";
+        cout << "The text file containing the names of downloading files is empty!\n";
         return;
     }
 
@@ -181,7 +181,7 @@ void handleClient(CSocket* pClient)
 
         if (!files[i].is_open())
         {
-            cout << "Failed to opened file: " << filesname[i] << '\n';
+            cout << "Failed to open file: " << filesFromClient[i].name << '\n';
             streamsize Error = -1;
             pClient->Send(&Error, sizeof(Error));
             return;
@@ -190,6 +190,7 @@ void handleClient(CSocket* pClient)
         files[i].seekg(0, ios::end);
         sizeOfFile[i] = files[i].tellg();
         pClient->Send(&sizeOfFile[i], sizeof(sizeOfFile[i]));
+        cout << "Sent file size: " << sizeOfFile[i] << " for file " << filesFromClient[i].name << '\n'; // Ghi log
         files[i].seekg(0, ios::beg);
     }
 
@@ -212,24 +213,17 @@ void handleClient(CSocket* pClient)
         {
             if (sizeOfFile[i] > 0 && !sendAllFile[i])
             {
-                if (sizeOfFile[i] >= 1024)
-                {
-                    pClient->Send((char*) &i, sizeof(i), 0);
-                    files[i].read(packageSend, sizeof(packageSend));
-                    sizeOfFile[i] -= 1024;
-                    pClient->Send(packageSend, sizeof(packageSend));
+                int bytesToSend = min((streamsize)sizeof(packageSend), sizeOfFile[i]);
+                files[i].read(packageSend, bytesToSend);
+                pClient->Send((char*)&i, sizeof(i), 0);
+                int bytesSent = pClient->Send(packageSend, bytesToSend);
+                sizeOfFile[i] -= bytesSent;
+
+                cout << "Sent " << bytesSent << " bytes for file " << filesFromClient[i].name << " remaining: " << sizeOfFile[i] << '\n'; // Ghi log
+
+                if (sizeOfFile[i] <= 0) {
+                    sendAllFile[i] = true;
                 }
-                else
-                {
-                    pClient->Send((char*)&i, sizeof(i), 0);
-                    files[i].read(packageSend, sizeof(packageSend));
-                    sizeOfFile[i] -= files[i].gcount();
-                    pClient->Send(packageSend, files[i].gcount());
-                }
-            }
-            else
-            {
-                sendAllFile[i] = true;
             }
         }
     }
@@ -252,7 +246,7 @@ DWORD WINAPI processClient(LPVOID arg)
 
     pClient->Close();
 
-    cout << "\nClient is close connection.\n";
+    cout << "\nClient closed the connection.\n";
 
     delete hConnected;
     delete pClient;
@@ -289,12 +283,12 @@ int main() {
 
             cout << "Server is listening on port 12345.\n\n";
 
-            while (true) 
+            while (true)
             {
                 CSocket* pClient = new CSocket();
-                if (serverSocket.Accept(*pClient)) 
-                { 
-                    cout << "\nClient is connected.\n";
+                if (serverSocket.Accept(*pClient))
+                {
+                    cout << "\nClient connected.\n";
                     SOCKET* hConnected = new SOCKET;
                     *hConnected = pClient->Detach();
                     threadStatus = CreateThread(NULL, 0, processClient, hConnected, 0, &threadID);
